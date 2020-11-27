@@ -107,9 +107,7 @@ void FDOCT::initialCompute()
 
 void FDOCT::readInterferogram(Mat m)
 {
-	Mat m_64F;
-	m.convertTo(m_64F, CV_64F);
-	data_y = m_64F; 
+	data_y = m; 
 }
 
 void FDOCT::dividebySpectrum(Mat spectrum)
