@@ -6,7 +6,10 @@ Author: Denny
 	March 2021
 
 the keys and their purposes are given below   
-A - enables Accumulate mode
+a - enables accumulate mode
+A - enables the Average mode
+4 - increments the number of averages in  Average mode by 5
+3 - increments the number of averages in  Average mode by 5
 L - enables Live mode
 ] - increases threshold for display by 3dB
 [ - decreases threshold for display by 3dB
