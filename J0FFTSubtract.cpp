@@ -3,7 +3,8 @@ Code to display Bscans obtained using J0-null method in FD-OCT
 		based on mehtod (a) subtraction in the Fourier domain
 
 Author: Denny
-		Nov 2020
+	March 2021
+
 the keys and their purposes are given below   
 A - enables Accumulate mode
 L - enables Live mode
@@ -11,7 +12,6 @@ L - enables Live mode
 [ - decreases threshold for display by 3dB
 f - increases the Fudge factor by 0.005
 g - decreases the fudGe factor by 0.005
-b - displays the non-subtracted Bscan (toggle key)
 s - Saves the current Bscan to disk
 d - save the current background frame S(k) 
 	so as to Divide by the interferograms by S(k) for subsequent bscans 
@@ -54,11 +54,13 @@ int main()
 {
 	int result = 0;
 	bool expchanged = false, accummode = false, refreshkeypressed = false, skeypressed = false, doneflag = false, dkeypressed = false;
+	bool Averagemode = false;
 	bool dir_created = false;
 	float fudgefactor = 1.000;
 	double minVal, maxVal, bscanthreshold = 72.0;
 	int fps, dt, key;
-	double spectcount = 0, spectnumavgs = 1000;	
+	double spectcount = 0, spectnumavgs = 1000;
+	double framecount = 1.0;	// to be used for averaging when in accum mode
 
 	system("clear");
 	// Print application build information
@@ -92,6 +94,9 @@ int main()
 	Mat secrowofstatusimgRHS = statusimg(Rect(300, 50, 300, 50));
 	Mat thirdrowofstatusimg = statusimg(Rect(0, 100, 600, 50));
 	char textbuffer[80];
+
+	namedWindow("Interferogram", 0); // 0 = WINDOW_NORMAL
+	moveWindow("Interferogram", 0, 0);
 
 	namedWindow("Bscan", 0); // 0 = WINDOW_NORMAL
 	moveWindow("Bscan", 500, 0);
@@ -265,11 +270,10 @@ int main()
 
 				// accumulate the J0Null background bscans to J
 				accumulate(bscantemp, J);
-				fps++; 
+				fps++;
 
 			} // end of if ret == 1 block 
 	
-
 			res = 0;
 			STOP = FALSE;
 			tcflush(fd, TCIFLUSH);
@@ -311,6 +315,8 @@ int main()
 			// pResultImage has to be released to avoid buffer filling up
 			pResultImage->Release();
 
+			imshow("Interferogram",m);
+
 			if(ret == 1)
 			{
 				oct.readInterferogram(data_y);
@@ -328,11 +334,17 @@ int main()
 			transpose(J, jscan);
 
 			transpose(S, bscan);
-
-			jdiff = bscan - fudgefactor*jscan;	// these are in linear scale
 			
+// absolute diff --- uncomment the next two lines for absolute diff 	
+			//absdiff(bscan,fudgefactor*jscan,jdiff);
+			//positivediff = jdiff / framecount;	
+
+// only positive --- comment the next four lines if negative values should NOT be set to zero
+			jdiff = bscan - fudgefactor*jscan;
 			jdiff.copyTo(positivediff);		// just to initialize the Mat
 			makeonlypositive(jdiff, positivediff);
+			positivediff = positivediff / framecount;	
+
 			positivediff += 0.000001;			// to avoid log(0)
 			log(positivediff, bscanlog);				// switch to logarithmic scale
 			bscandb = 20.0 * bscanlog / 2.303;
@@ -344,7 +356,7 @@ int main()
 			normalize(bscandisp, bscandisp, 0, 1, NORM_MINMAX);	// normalize the log plot for display
 			bscandisp.convertTo(bscandisp, CV_8UC1, 255.0);
 			applyColorMap(bscandisp, cmagI, COLORMAP_JET);
-			imshow("Bscan", cmagI);
+			//imshow("Bscan", cmagI);
 
 
 			if (skeypressed == true)
@@ -372,10 +384,28 @@ int main()
 				skeypressed = false;
 			}			
 
-			if (accummode == false)
+			if (accummode == false && Averagemode == false) // live mode
 			{
 				J = Mat::zeros(Size(numdisplaypoints, h), CV_64F);
 				S = Mat::zeros(Size(numdisplaypoints, h), CV_64F);
+				framecount = 1;
+				imshow("Bscan", cmagI);
+			}
+			else if(Averagemode == false) // accum mode
+			{
+				framecount++; 
+				imshow("Bscan", cmagI);
+			}
+			else if(framecount < averagescount)// Average mode
+			{
+				framecount++; 
+			}
+			else
+			{
+				imshow("Bscan", cmagI);
+				J = Mat::zeros(Size(numdisplaypoints, h), CV_64F);
+				S = Mat::zeros(Size(numdisplaypoints, h), CV_64F);
+				framecount = 1;
 			}
 
 			if(dkeypressed == true)
@@ -396,6 +426,7 @@ int main()
 				J = Mat::zeros(Size(numdisplaypoints, h), CV_64F);
 				S = Mat::zeros(Size(numdisplaypoints, h), CV_64F);
 				refreshkeypressed = false;
+				framecount = 1;
 			}
 
 			gettimeofday(&tv,NULL);	
@@ -412,10 +443,12 @@ int main()
 				firstrowofstatusimg = Mat::zeros(cv::Size(600, 50), CV_64F);
 				putText(statusimg, textbuffer, Point(0, 30), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 3, 1);
 			
-				if (accummode == false)	
-					sprintf(textbuffer, " Live mode ");
+				if (accummode == true)	
+					sprintf(textbuffer, "accum. mode ");
+				else if(Averagemode == true)
+					sprintf(textbuffer, "Avg mode N=%d",averagescount);
 				else
-					sprintf(textbuffer, "Accum. mode ");
+					sprintf(textbuffer, " Live mode ");
 
 				secrowofstatusimgRHS = Mat::zeros(cv::Size(300, 50), CV_64F);
 				putText(statusimg, textbuffer, Point(300, 80), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 3, 1);
@@ -488,15 +521,31 @@ int main()
 				break;
 		
 			case 'a':
-			case 'A':
 				// accumulate mode
 				accummode = true;
+				break;
+
+			case 'A':
+				// Average mode
+				Averagemode = true;
+				break;
+			
+			case '4':
+				// increment number of averages by 5
+				averagescount += 5;
+				break;
+
+			case '3':
+				// decrement number of averages by 5
+				if(averagescount >= 10)
+					averagescount -= 5;
 				break;
 
 			case 'l':
 			case 'L':
 				// live mode
 				accummode = false;
+				Averagemode = false;
 				break;
 
 			case 'r':
