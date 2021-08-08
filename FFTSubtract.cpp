@@ -3,7 +3,7 @@ Code to display Bscans obtained in FD-OCT
 	 using the method of subtraction in the Fourier domain
 
 Author: Denny
-		July 2021
+		August 2021
 
 The keys and their purposes are given below   
 
@@ -17,6 +17,7 @@ s - Saves the current Bscan to disk
 '-' - decreases exposure time by 100 microseconds
 Esc or x - quits the program
 
+i - to display ROI
 ROI control
 t - set the top-left corner as the selected point
 r - set the right-bottom corner as the selected point
@@ -118,6 +119,7 @@ int main()
 	double lambdamin, lambdamax;
 	unsigned int averagescount, numdisplaypoints, fftpointsmultiplier;
 	char thresholdstr[40];
+	bool ROIflag = false;
 	unsigned int ROIstartrow, ROIendrow, ROIstartcol, ROIendcol, heightROI, widthROI;
 	double ROImeanVal, ROImaxVal;
 	unsigned int binvaluex = 1, binvaluey = 1;
@@ -177,13 +179,16 @@ int main()
 		h = pCam->Height.GetValue();
 		opw = w / binvaluex;
 		oph = h / binvaluey;
+		cout << "binvaluex set to " << binvaluex << " ..." <<endl;
+		cout << "binvaluey set to " << binvaluey << " ..." << endl;
+		cout << "width set to " << opw << " ..." <<endl;
+		cout << "height set to " << oph << " ..." << endl;
 		camtime = pCam->ExposureTime.GetValue();
 
 		FDOCT oct;
-		//oct.setWidthHeight(w,h);
 		oct.setWidthHeight(opw,oph);
 		oct.setLambdaMinMax(lambdamin,lambdamax);
-		//oct.setfftpointsmultiplier(fftpointsmultiplier);
+		oct.setfftpointsmultiplier(fftpointsmultiplier);
 		oct.setnumdisplaypoints(numdisplaypoints);
 		oct.initialCompute();		
 
@@ -337,7 +342,7 @@ int main()
 
 			bscandb.row(4).copyTo(bscandb.row(1));	// masking out the DC in the display
 			bscandb.row(4).copyTo(bscandb.row(0));
-			tempmat = bscandb.rowRange(0, numdisplaypoints);
+			tempmat = bscandb.colRange(0, numdisplaypoints);
 			tempmat.copyTo(bscandisp);
 			bscandisp = max(bscandisp, bscanthreshold);
 			normalize(bscandisp, bscandisp, 0, 1, NORM_MINMAX);	// normalize the log plot for display
@@ -368,8 +373,8 @@ int main()
 
 				skeypressed = false;
 			}			
-			
-			rectangle(cmagI,ROItopleft,ROIbottright,Scalar(0,255,0),1, LINE_8);
+			if (ROIflag == true)	
+				rectangle(cmagI,ROItopleft,ROIbottright,Scalar(0,255,0),1, LINE_8);
 			imshow("Bscan", cmagI);
 			S = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
 
@@ -394,7 +399,10 @@ int main()
 
 				secrowofstatusimgRHS = Mat::zeros(cv::Size(300, 50), CV_64F);
 				putText(statusimg, textbuffer, Point(300, 80), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 3, 1);
-			
+				
+				if(ROIflag == true)
+				{
+
 				// display max val of Bscan
 				heightROI = ROIendrow - ROIstartrow;
 				widthROI = ROIendcol - ROIstartcol;
@@ -410,6 +418,7 @@ int main()
 				fourthrowofstatusimg = Mat::zeros(cv::Size(600, 50), CV_64F);
 				putText(statusimg, textbuffer, Point(0,190), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 3, 1);
 
+				}
 				resizeWindow("Status", 600, 300);
 				imshow("Status", statusimg);
 			
@@ -490,19 +499,30 @@ int main()
 				bgframestaken = false;
 				break;
 
-			// keys to change ROI
+			case 'i':
+				// toggle ROI display
+				ROIflag = !ROIflag;
+				break;
+			
+				// keys to change ROI
 
 			case 't':
+				if (ROIflag == false)
+					break;
 				// select the topleft corner point
 				selectedpoint = 1; //topleft
 				break; 			 
 
 			case 'r':
+				if (ROIflag == false)
+					break;
 				// select the rightbottom corner point
 				selectedpoint = 2; //rightbottom
 				break; 
 			 
 			case 82: 							// up arrow key = R ?
+				if (ROIflag == false)
+					break;
 				if(selectedpoint == topleft)
 				{
 					// move up the topleft corner of ROI by 5 pixels
@@ -522,10 +542,12 @@ int main()
 				break;
 
 			case 84: 						// down arrow key = T ?
+				if (ROIflag == false)
+					break;
 				if(selectedpoint == topleft)
 				{
 					// move down the topleft corner of ROI by 5 pixels
-					if(ROIstartrow < (numdisplaypoints-5) )
+					if(ROIstartrow < (oph-5) )
 						ROIstartrow += 5;
 					if(ROIendrow-ROIstartrow <= 0)
 						ROIstartrow -= 5;
@@ -534,7 +556,7 @@ int main()
 				if(selectedpoint == bottomright)
 				{
 					// move down the bottomright corner of ROI by 5 pixels
-					if(ROIendrow < (numdisplaypoints-5) )
+					if(ROIendrow < (oph-5) )
 						ROIendrow += 5;
 					ROIbottright.y = ROIendrow;
 
@@ -542,6 +564,8 @@ int main()
 				break;
 
 			case 81:						// left arrow key = Q ?
+				if (ROIflag == false)
+					break;
 				if(selectedpoint == topleft)
 				{ 
 					// move left the topleft corner of the ROI by 5 pixels
@@ -561,10 +585,12 @@ int main()
 				break;
 
 			case 83:						// right arrow key = S ?
+				if (ROIflag == false)
+					break;
 				if(selectedpoint == topleft)
 				{ 
 					// move right the topleft corner of the ROI by 5 pixels
-					if(ROIstartcol < (oph-5))
+					if(ROIstartcol < (numdisplaypoints-5))
 						ROIstartcol += 5;
 					if(ROIendcol-ROIstartcol <= 0)
 						ROIstartcol -= 5;
@@ -573,7 +599,7 @@ int main()
 				if(selectedpoint == bottomright)
 				{
 					// move right the bottomright corner of the ROI by 5 pixels
-					if(ROIendcol < (oph-5))
+					if(ROIendcol < (numdisplaypoints-5))
 						ROIendcol += 5;
 					ROIbottright.x = ROIendcol;
 				}
