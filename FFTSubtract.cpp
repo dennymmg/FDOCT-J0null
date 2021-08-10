@@ -208,7 +208,7 @@ int main()
 		J = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);			// Size(cols,rows)
 		S = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
 		Sk = Mat::ones(Size(opw,oph),CV_16UC1);
-		Mat jdiff, positivediff, bscanlog, bscandb, tempmat, bscandisp, cmagI;
+		Mat jdiff, positivediff, bscanlog, bscandb, tempmat1, bscandisp, cmagI, tempmat2;
 		Mat ROI;	
 		// ROI parameters
 		Point ROItopleft(ROIstartcol,ROIstartrow), ROIbottright(ROIendcol,ROIendrow);
@@ -217,7 +217,6 @@ int main()
 		selectedpoint = topleft;
 
 		resizeWindow("Bscan", oph, numdisplaypoints);		// (width,height)
-		//resizeWindow("Interferogram", opw, oph);		// (width,height)
 		int ret;
 		unsigned int ii; // index
 
@@ -342,12 +341,24 @@ int main()
 
 			bscandb.row(4).copyTo(bscandb.row(1));	// masking out the DC in the display
 			bscandb.row(4).copyTo(bscandb.row(0));
-			tempmat = bscandb.colRange(0, numdisplaypoints);
-			tempmat.copyTo(bscandisp);
+			tempmat1 = bscandb.colRange(0, numdisplaypoints);
+			if(binvaluex > 1 || binvaluey > 1)
+			{
+				resize(tempmat1,tempmat2,Size(),binvaluex,binvaluey,INTER_AREA);
+			}
+			else
+			{
+				tempmat1.copyTo(tempmat2);
+			}
+			tempmat2.copyTo(bscandisp);
 			bscandisp = max(bscandisp, bscanthreshold);
 			normalize(bscandisp, bscandisp, 0, 1, NORM_MINMAX);	// normalize the log plot for display
 			bscandisp.convertTo(bscandisp, CV_8UC1, 255.0);
 			applyColorMap(bscandisp, cmagI, COLORMAP_JET);
+			if (ROIflag == true)	
+				rectangle(cmagI,ROItopleft,ROIbottright,Scalar(0,255,0),1, LINE_8);
+			imshow("Bscan", cmagI);
+			S = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
 
 			if (skeypressed == true)
 			{
@@ -373,10 +384,6 @@ int main()
 
 				skeypressed = false;
 			}			
-			if (ROIflag == true)	
-				rectangle(cmagI,ROItopleft,ROIbottright,Scalar(0,255,0),1, LINE_8);
-			imshow("Bscan", cmagI);
-			S = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
 
 			gettimeofday(&tv,NULL);	
 			time_end = 1000000 * tv.tv_sec + tv.tv_usec;	
@@ -402,23 +409,25 @@ int main()
 				
 				if(ROIflag == true)
 				{
-
-				// display max val of Bscan
-				heightROI = ROIendrow - ROIstartrow;
-				widthROI = ROIendcol - ROIstartcol;
-				tempmat(Rect(ROIstartcol,ROIstartrow,widthROI,heightROI)).copyTo(ROI);
-				ROI.reshape(0, 1);	//make it into a row array
-				minMaxLoc(ROI, &minVal, &maxVal);
-				meanVal = mean(ROI)(0);
-				//sprintf(textbuffer, "Max Bscan val = %d dB", int(round(maxVal)));
-				if (selectedpoint == topleft)
-					sprintf(textbuffer, "ROI T(%d,%d) max=%d mean=%d", ROIstartcol, ROIstartrow, int(round(maxVal)), int(round(meanVal)));
-				if (selectedpoint == bottomright)
-					sprintf(textbuffer, "ROI R(%d,%d) max=%d mean=%d", ROIendcol, ROIendrow, int(round(maxVal)), int(round(meanVal)));
+					// display max val of Bscan
+					heightROI = ROIendrow - ROIstartrow;
+					widthROI = ROIendcol - ROIstartcol;
+					tempmat2(Rect(ROIstartcol,ROIstartrow,widthROI,heightROI)).copyTo(ROI);
+					ROI.reshape(0, 1);	//make it into a row array
+					minMaxLoc(ROI, &minVal, &maxVal);
+					meanVal = mean(ROI)(0);
+					//sprintf(textbuffer, "Max Bscan val = %d dB", int(round(maxVal)));
+					if (selectedpoint == topleft)
+						sprintf(textbuffer, "ROI T(%d,%d) max=%d mean=%d", ROIstartcol, ROIstartrow, int(round(maxVal)), int(round(meanVal)));
+					if (selectedpoint == bottomright)
+						sprintf(textbuffer, "ROI R(%d,%d) max=%d mean=%d", ROIendcol, ROIendrow, int(round(maxVal)), int(round(meanVal)));
+				}
+				else
+				{
+					sprintf(textbuffer, " Press i for ROI ");
+				}
 				fourthrowofstatusimg = Mat::zeros(cv::Size(600, 50), CV_64F);
 				putText(statusimg, textbuffer, Point(0,190), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 3, 1);
-
-				}
 				resizeWindow("Status", 600, 300);
 				imshow("Status", statusimg);
 			
@@ -494,7 +503,7 @@ int main()
 				skeypressed = true;
 				break;
 
-			case 'b':			
+			case 'b':
 				// new bscan background			
 				bgframestaken = false;
 				break;
@@ -527,16 +536,16 @@ int main()
 				{
 					// move up the topleft corner of ROI by 5 pixels
 					if(ROIstartrow > 5)
-						ROIstartrow -= 5;
+						ROIstartrow -= 1;
 					ROItopleft.y = ROIstartrow;
 				}
 				if(selectedpoint == bottomright)
 				{
 					// move up the bottomright corner of ROI by 5 pixels
 					if(ROIendrow > 5)
-						ROIendrow -= 5;
+						ROIendrow -= 1;
 					if(ROIendrow-ROIstartrow <= 0)
-						ROIendrow += 5;
+						ROIendrow += 1;
 					ROIbottright.y = ROIendrow;
 				}
 				break;
@@ -547,17 +556,17 @@ int main()
 				if(selectedpoint == topleft)
 				{
 					// move down the topleft corner of ROI by 5 pixels
-					if(ROIstartrow < (oph-5) )
-						ROIstartrow += 5;
+					if(ROIstartrow < (oph*binvaluey-5) )
+						ROIstartrow += 1;
 					if(ROIendrow-ROIstartrow <= 0)
-						ROIstartrow -= 5;
+						ROIstartrow -= 1;
 					ROItopleft.y = ROIstartrow;
 				}
 				if(selectedpoint == bottomright)
 				{
 					// move down the bottomright corner of ROI by 5 pixels
-					if(ROIendrow < (oph-5) )
-						ROIendrow += 5;
+					if(ROIendrow < (oph*binvaluey-5) )
+						ROIendrow += 1;
 					ROIbottright.y = ROIendrow;
 
 				}
@@ -570,16 +579,16 @@ int main()
 				{ 
 					// move left the topleft corner of the ROI by 5 pixels
 					if(ROIstartcol > 5)
-						ROIstartcol -= 5;
+						ROIstartcol -= 1;
 					ROItopleft.x = ROIstartcol;
 				}
 				if(selectedpoint == bottomright)
 				{
 					// move left the bottomright corner of the ROI by 5 pixels
 					if(ROIendcol > 5)
-						ROIendcol -= 5;
+						ROIendcol -= 1;
 					if(ROIendcol-ROIstartcol <= 0)
-						ROIendcol += 5;
+						ROIendcol += 1;
 					ROIbottright.x = ROIendcol;
 				}
 				break;
@@ -590,17 +599,17 @@ int main()
 				if(selectedpoint == topleft)
 				{ 
 					// move right the topleft corner of the ROI by 5 pixels
-					if(ROIstartcol < (numdisplaypoints-5))
-						ROIstartcol += 5;
+					if(ROIstartcol < (numdisplaypoints*binvaluex-5))
+						ROIstartcol += 1;
 					if(ROIendcol-ROIstartcol <= 0)
-						ROIstartcol -= 5;
+						ROIstartcol -= 1;
 					ROItopleft.x = ROIstartcol;
 				}
 				if(selectedpoint == bottomright)
 				{
 					// move right the bottomright corner of the ROI by 5 pixels
-					if(ROIendcol < (numdisplaypoints-5))
-						ROIendcol += 5;
+					if(ROIendcol < (numdisplaypoints*binvaluex-5))
+						ROIendcol += 1;
 					ROIbottright.x = ROIendcol;
 				}
 				break;
