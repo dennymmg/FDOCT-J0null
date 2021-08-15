@@ -3,7 +3,7 @@ Code to display Bscans obtained using J0-null method in FD-OCT
 		based on mehtod (a) subtraction in the Fourier domain
 
 Author: Denny
-		March 2021
+		August 2021
 
 the keys and their purposes are given below   
 4 - increments the number of averages by 5 in Average mode
@@ -15,21 +15,22 @@ g - decreases the fudGe factor by 0.005
 s - Saves the current Bscan to disk
 '+' - increases exposure time by 100 microseconds
 '-' - decreases exposure time by 100 microseconds
+'a' - to enter accumulate mode
+'l' - to enter live mode
 Esc or x - quits the program
 
 i - to display ROI
-ROI control
-t - set the top-left corner as the selected point
-r - set the right-bottom corner as the selected point
-up arrow key - move the selected point up by 5 pixels 
-down arrow key - move the selected point down by 5 pixels
-left arrow key - move the selected point to the left by 5 pixels
-right arrow key - move the selected point to the right by 5 pixels
- 
+the arrow keys can be used to control the position and size of ROI
+By default, arrow keys allow to control position of ROI
+Press 'r' to change size of ROI using arrow keys
+Press 't' to go back to changing position of ROI
+Press 'p' to display ROI stats for X1+X2
+Press 'm' to display ROI stats for X2-X1
+
 */
 
 /*
-// Date: 2nd July 2021
+// Date: August 2021
 
 // Protocol for vibration detection
 // Camera runs in non-triggered mode
@@ -45,7 +46,21 @@ right arrow key - move the selected point to the right by 5 pixels
 // step 7: displays X2 - X1
 // step 8: go back to step1
 
+Calculation of vibration amplitude
+
+For lambdacentre = 886.1 nm, deltalambda = 35.56 nm
+
+	First zero of J0(x) occurs at x = M = 2.405
+		2 * k * A = M
+	==> 2 * 2*pi/lambdac * A = 2.405 
+	==> A = 2.405 * lambdac / (4*pi)
+		  = 2.405 * 886.1 / (4*pi) nm
+		  = 169.6 nm is the vibration amplitude correpsonding to J0 Null
+
+Vibration amplitude, V = (X1-X2)/(X1+X2) * A
+
 */
+
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #include "FDOCT.h"
@@ -80,14 +95,15 @@ inline void savematasimage(char* p, char* d, char* f, Mat m);
 int main()
 {
 	int result = 0;
-	bool bgframestaken = false;
+	bool bgframestaken = false, accummode = false;
 	bool expchanged = false, skeypressed = false, doneflag = false;
 	bool dir_created = false;
-	double minVal, maxVal, meanVal, bscanthreshold = 72.0;
+	double minval, maxval, minvalsum, maxvalsum, meanvalsum, minvaldiff, maxvaldiff, meanvaldiff, bscanthreshold = 72.0;
 	float fudgefactor = 1.000;
 	int dt, key;
-	double fps = 0.0;	
-
+	double fps = 0.0, framecount = 0.0;
+	double V = 0.0, A = 0.0; // vibration amplitude
+	A = 169.6; // vibration amplitude in nm coresponding to J0 Null for lambda = 886.1 nm
 	system("clear");
 	// Print application build information
 	cout << "Application build date: " << __DATE__ << " " << __TIME__ << endl << endl;
@@ -127,11 +143,11 @@ int main()
 	namedWindow("X1+X2", 0); // 0 = WINDOW_NORMAL
 	moveWindow("X1+X2", 900, 0);
 
-	namedWindow("X1-X2", 0); // 0 = WINDOW_NORMAL
-	moveWindow("X1-X2", 900, 400);
+	namedWindow("X2-X1", 0); // 0 = WINDOW_NORMAL
+	moveWindow("X2-X1", 900, 400);
 	
-	namedWindow("X1", 0); // 0 = WINDOW_NORMAL
-	moveWindow("X1", 500, 0);
+	namedWindow("X2", 0); // 0 = WINDOW_NORMAL
+	moveWindow("X2", 500, 0);
 
 	namedWindow("Status", 0); // 0 = WINDOW_NORMAL
 	moveWindow("Status", 0, 600);
@@ -182,7 +198,7 @@ int main()
 	unsigned int averagescount, numdisplaypoints, fftpointsmultiplier;
 	char thresholdstr[40];
 	bool ROIflag = false;
-	unsigned int ROIstartrow, ROIendrow, ROIstartcol, ROIendcol, heightROI, widthROI;
+	unsigned int ROIstartrow, ROIendrow, ROIstartcol, ROIendcol, heightROI, widthROI, ROIstepsize = 1;
 	double ROImeanVal, ROImaxVal;
 	unsigned int binvaluex = 1, binvaluey = 1;
 
@@ -270,17 +286,19 @@ int main()
 		X1 = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);			// Size(cols,rows)
 		X2 = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
 		Sk = Mat::ones(Size(opw,oph),CV_16UC1);
-		Mat jdiff, positivediff, bscanlog, bscandb, tempmat, bscandisp, cmagI;
-		Mat ROI;	
+		Mat jdiff, positivediff, bscanlog, bscandb, tempmat1, bscandisp, cmagI, tempmat2;
+		Mat ROI, tempmatsum, tempmatdiff;	
 		// ROI parameters
 		Point ROItopleft(ROIstartcol,ROIstartrow), ROIbottright(ROIendcol,ROIendrow);
-		enum corner{topleft=1,bottomright};
-		int selectedpoint;
-		selectedpoint = topleft;
+		enum ROIoption{position=1,size};
+		enum displayROI{plus=1,minus, vib};
+		int selectedROIoption, displayROI;
+		selectedROIoption = position;
+		displayROI = minus; // display ROI stats for X1-X2
 	
 		resizeWindow("X1+X2", oph, numdisplaypoints);		// (width,height)
-		resizeWindow("X1-X2", oph, numdisplaypoints);		// (width,height)
-		resizeWindow("X1", oph, numdisplaypoints);		// (width,height)
+		resizeWindow("X2-X1", oph, numdisplaypoints);		// (width,height)
+		resizeWindow("X2", oph, numdisplaypoints);		// (width,height)
 		int ret;
 		unsigned int ii; // index
 
@@ -326,7 +344,7 @@ int main()
 						oct.dividebySpectrum(Sk);
 						bscantemp = oct.computeBscan();	
 
-						// accumulate the set of background bscans to J
+						// accumulate the set of background bscans to B
 						accumulate(bscantemp, B);
 
 					} // end of if ret == 1 block 
@@ -335,6 +353,8 @@ int main()
 				bgframestaken = true;				
 			} // end of if(bgframestaken == false)
 
+			// write 'I' to Arduino - I for in phase
+			write(fd, "I", sizeof("I"));
 			// read a set of images from the camera,  
 			// compute bscan and accumulate to Mat X1
 			for(ii = 1; ii <= averagescount; ii++)
@@ -362,6 +382,7 @@ int main()
 				// pResultImage has to be released to avoid buffer filling up
 				pResultImage->Release();
 
+				tcflush(fd, TCIFLUSH);
 				imshow("Interferogram", opm);
 
 				if(ret == 1)
@@ -372,31 +393,17 @@ int main()
 
 					// accumulate the bscans to X1
 					accumulate(bscantemp, X1);
+					framecount ++;
 					fps++;
 				} // end of if ret == 1 block 
 
 			} // end of for loop ii <= averagescount
 
-			// write P to Arduino
-			write(fd, "P", sizeof("P"));
-
-	/*		// read an image from camera and discard it
-			ret = 0;
-			while(ret == 0)
-			{
-				pResultImage = pCam->GetNextImage();
-				if (pResultImage->IsIncomplete())
-				{
-					ret = 0;
-				}
-				else
-				{
-					ret = 1;
-				}
-			}
-			// pResultImage has to be released to avoid buffer filling up
-			pResultImage->Release();
-*/
+			// write 'O' to Arduino - O for out of phase
+			write(fd, "O", sizeof("O"));
+			
+			// delay of 10 ms
+			//usleep(1000);
 
 			// read a set of images from the camera,  
 			// compute bscan and accumulate to Mat X2
@@ -417,7 +424,7 @@ int main()
 						convertedImage = pResultImage;
 						m = Mat(h, w, CV_16UC1, convertedImage->GetData(), convertedImage->GetStride());
 						// binning (averaging)
-						resize(m, opm, Size(), 1.0 / binvaluex, 1.0 / binvaluey, INTER_AREA);
+						resize(m, opm, Size(), 1.0 / binvaluex , 1.0 / binvaluey, INTER_AREA);
 						opm.convertTo(data_y, CV_64F);
 					}
 				}
@@ -441,67 +448,107 @@ int main()
 			} // end of for loop ii <= averagescount
 
 			tcflush(fd, TCIFLUSH);
-
-			jdiff = X1 - B;
+			jdiff = X2 - B;
 			jdiff.copyTo(positivediff);		// just to initialize the Mat
 			makeonlypositive(jdiff, positivediff);
-			positivediff = positivediff / (1.0 * averagescount);	
+			if (accummode == true)
+				positivediff = positivediff / (1.0 * framecount);
+			else
+				positivediff = positivediff / (1.0 * averagescount);	
 			positivediff += 0.000000001;			// to avoid log(0)
 			log(positivediff, bscanlog);				// switch to logarithmic scale
 			bscandb = 20.0 * bscanlog / 2.303;
 			bscandb.row(4).copyTo(bscandb.row(1));	// masking out the DC in the display
 			bscandb.row(4).copyTo(bscandb.row(0));
-			tempmat = bscandb.colRange(0, numdisplaypoints);
-			tempmat.copyTo(bscandisp);
+			tempmat1 = bscandb.colRange(0, numdisplaypoints);
+			if(binvaluex > 1 || binvaluey > 1)
+			{
+				resize(tempmat1,tempmat2,Size(),binvaluex,binvaluey,INTER_AREA);
+			}
+			else
+			{
+				tempmat1.copyTo(tempmat2);
+			}
+			tempmat2.copyTo(bscandisp);
 			bscandisp = max(bscandisp, bscanthreshold);
 			normalize(bscandisp, bscandisp, 0, 1, NORM_MINMAX);	// normalize the log plot for display
 			bscandisp.convertTo(bscandisp, CV_8UC1, 255.0);
 			applyColorMap(bscandisp, cmagI, COLORMAP_JET);
-			imshow("X1", cmagI);
-			
-// absolute diff --- uncomment the next two lines for absolute diff 	
+			imshow("X2", cmagI);
+			//cout << "framecount = " << framecount << endl;
+			// absolute diff --- uncomment the next two lines for absolute diff 	
 			//absdiff(X1,X2,jdiff);
 			//positivediff = jdiff / (1.0 * averagescount);	
-
+							
 // only positive --- comment the next four lines if negative values should NOT be set to zero
+			jdiff = (X2-X1);
+			jdiff.copyTo(positivediff);
+			//makeonlypositive(jdiff, positivediff);
+			if (accummode == true)
+				positivediff = positivediff / (1.0 * framecount);
+			else
+				positivediff = positivediff / (1.0 * averagescount);	
+			//positivediff += 0.000000001;			// to avoid log(0)
+			// comment the below two lines for linear scale
+			//log(positivediff, bscanlog);				// switch to logarithmic scale
+			//bscandb = 20.0 * bscanlog / 2.303;
+			// uncomment the below line for linear scale
+			//positivediff.copyTo(bscandb);
+			//bscandb.row(4).copyTo(bscandb.row(1));	// masking out the DC in the display
+			//bscandb.row(4).copyTo(bscandb.row(0));
+			//tempmat1 = bscandb.colRange(0, numdisplaypoints);
+			tempmat1 = positivediff.colRange(0, numdisplaypoints);
+			if(binvaluex > 1 || binvaluey > 1)
+			{
+				resize(tempmat1,tempmatdiff,Size(),binvaluex,binvaluey,INTER_AREA);
+			}
+			else
+			{
+				tempmat1.copyTo(tempmatdiff);
+			}
+			tempmatdiff.copyTo(bscandisp);
+			bscandisp = max(bscandisp, bscanthreshold);
+			normalize(bscandisp, bscandisp, 0, 1, NORM_MINMAX);	// normalize the log plot for display
+			bscandisp.convertTo(bscandisp, CV_8UC1, 255.0);
+			applyColorMap(bscandisp, cmagI, COLORMAP_JET);
+
+			if (ROIflag == true)	
+				rectangle(cmagI,ROItopleft,ROIbottright,Scalar(0,255,0),1, LINE_8);
+			imshow("X2-X1", cmagI);
+
 			jdiff = (X1 + X2 - 2*B); // sum
 			jdiff.copyTo(positivediff);		// just to initialize the Mat
 			makeonlypositive(jdiff, positivediff);
-			positivediff = positivediff / (1.0 * averagescount);	
+			if (accummode == true)
+				positivediff = positivediff / (1.0 * framecount);
+			else
+				positivediff = positivediff / (1.0 * averagescount);	
 			positivediff += 0.000000001;			// to avoid log(0)
 			// comment the below two lines for linear scale
 			log(positivediff, bscanlog);				// switch to logarithmic scale
 			bscandb = 20.0 * bscanlog / 2.303;
 			// uncomment the below line for linear scale
-			//positivediff.copyTo(bscandb);
+			jdiff.copyTo(bscandb);
 			bscandb.row(4).copyTo(bscandb.row(1));	// masking out the DC in the display
 			bscandb.row(4).copyTo(bscandb.row(0));
-			tempmat = bscandb.colRange(0, numdisplaypoints);
-			tempmat.copyTo(bscandisp);
+			tempmat1 = bscandb.colRange(0, numdisplaypoints);
+			if(binvaluex > 1 || binvaluey > 1)
+			{
+				resize(tempmat1,tempmatsum,Size(),binvaluex,binvaluey,INTER_AREA);
+			}
+			else
+			{
+				tempmat1.copyTo(tempmatsum);
+			}
+			tempmatsum.copyTo(bscandisp);
 			bscandisp = max(bscandisp, bscanthreshold);
 			normalize(bscandisp, bscandisp, 0, 1, NORM_MINMAX);	// normalize the log plot for display
 			bscandisp.convertTo(bscandisp, CV_8UC1, 255.0);
 			applyColorMap(bscandisp, cmagI, COLORMAP_JET);
+			if (ROIflag == true)	
+				rectangle(cmagI,ROItopleft,ROIbottright,Scalar(0,255,0),1, LINE_8);
 			imshow("X1+X2", cmagI);
 
-			jdiff = (X1-X2);
-			jdiff.copyTo(positivediff);		// just to initialize the Mat
-			makeonlypositive(jdiff, positivediff);
-			positivediff = positivediff / (1.0 * averagescount);	
-			positivediff += 0.000000001;			// to avoid log(0)
-			// comment the below two lines for linear scale
-			log(positivediff, bscanlog);				// switch to logarithmic scale
-			bscandb = 20.0 * bscanlog / 2.303;
-			// uncomment the below line for linear scale
-			//positivediff.copyTo(bscandb);
-			bscandb.row(4).copyTo(bscandb.row(1));	// masking out the DC in the display
-			bscandb.row(4).copyTo(bscandb.row(0));
-			tempmat = bscandb.colRange(0, numdisplaypoints);
-			tempmat.copyTo(bscandisp);
-			bscandisp = max(bscandisp, bscanthreshold);
-			normalize(bscandisp, bscandisp, 0, 1, NORM_MINMAX);	// normalize the log plot for display
-			bscandisp.convertTo(bscandisp, CV_8UC1, 255.0);
-			applyColorMap(bscandisp, cmagI, COLORMAP_JET);
 			if (skeypressed == true)
 			{
 				if(dir_created == false)
@@ -526,13 +573,13 @@ int main()
 
 				skeypressed = false;
 			}			
-			if (ROIflag == true)	
-				rectangle(cmagI,ROItopleft,ROIbottright,Scalar(0,255,0),1, LINE_8);
-			imshow("X1-X2", cmagI);
 
-			X1 = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
-			X2 = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
-
+			if(accummode == false)
+			{
+				X1 = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
+				X2 = Mat::zeros(Size(numdisplaypoints, oph), CV_64F);
+				framecount = 0.0;
+			}
 			gettimeofday(&tv,NULL);	
 			time_end = 1000000 * tv.tv_sec + tv.tv_usec;	
 			// update the image windows
@@ -542,12 +589,13 @@ int main()
 			{
 				m.copyTo(mvector);
 				mvector.reshape(0, 1);	//make it into a row array
-				minMaxLoc(mvector, &minVal, &maxVal);
-				sprintf(textbuffer, "fps = %d  Max val = %d", int(round(fps/dt*1e6)), int(floor(maxVal)));
-				//sprintf(textbuffer, "dt = %d  Max I = %d", dt, int(floor(maxVal)));
+				minMaxLoc(mvector, &minval, &maxval);
+				sprintf(textbuffer, "fps = %d  Max val = %d", int(round(fps/dt*1e6)), int(floor(maxval)));
 				firstrowofstatusimg = Mat::zeros(cv::Size(600, 50), CV_64F);
 				putText(statusimg, textbuffer, Point(0, 30), FONT_HERSHEY_SIMPLEX, 1, Scalar(255, 255, 255), 3, 1);
-				if (averagescount == 1)	
+				if(accummode == true)
+					sprintf(textbuffer, "Accum mode");
+				else if (averagescount == 1)	
 					sprintf(textbuffer, "Live mode");
 				else
 					sprintf(textbuffer, "Avg mode N = %d",averagescount);
@@ -560,15 +608,37 @@ int main()
 					// display max val of Bscan
 					heightROI = ROIendrow - ROIstartrow;
 					widthROI = ROIendcol - ROIstartcol;
-					tempmat(Rect(ROIstartcol,ROIstartrow,widthROI,heightROI)).copyTo(ROI);
+
+					tempmatdiff(Rect(ROIstartcol,ROIstartrow,widthROI,heightROI)).copyTo(ROI);
 					ROI.reshape(0, 1);	//make it into a row array
-					minMaxLoc(ROI, &minVal, &maxVal);
-					meanVal = mean(ROI)(0);
-					//sprintf(textbuffer, "Max Bscan val = %d dB", int(round(maxVal)));
-					if (selectedpoint == topleft)
-						sprintf(textbuffer, "ROI T(%d,%d) max=%d mean=%d", ROIstartcol, ROIstartrow, int(round(maxVal)), int(round(meanVal)));
-					if (selectedpoint == bottomright)
-						sprintf(textbuffer, "ROI R(%d,%d) max=%d mean=%d", ROIendcol, ROIendrow, int(round(maxVal)), int(round(meanVal)));
+					minMaxLoc(ROI, &minvaldiff, &maxvaldiff);
+					meanvaldiff = mean(ROI)(0);
+
+					tempmatsum(Rect(ROIstartcol,ROIstartrow,widthROI,heightROI)).copyTo(ROI);
+					ROI.reshape(0, 1);	//make it into a row array
+					minMaxLoc(ROI, &minvalsum, &maxvalsum);
+					meanvalsum = mean(ROI)(0);
+					
+					V = maxvaldiff / maxvalsum * A;
+					if(selectedROIoption == position)
+					{
+						if(displayROI == plus)
+							sprintf(textbuffer, "r 4size; '+': max=%d mean=%d", int(round(maxvalsum)), int(round(meanvalsum)));
+						if(displayROI == minus)
+							sprintf(textbuffer, "r 4size; '-': max=%d mean=%d", int(round(maxvaldiff)), int(round(meanvaldiff)));
+						if(displayROI == vib)
+							sprintf(textbuffer, "r 4size; Vmax = %d nm", int(round(V)));
+					}
+					
+					if(selectedROIoption == size)
+					{
+						if(displayROI == plus)
+							sprintf(textbuffer, "t 4pos; '+': max=%d mean=%d", int(round(maxvalsum)), int(round(meanvalsum)));
+						if(displayROI == minus)
+							sprintf(textbuffer, "t 4pos; '-': max=%d mean=%d", int(round(maxvaldiff)), int(round(meanvaldiff)));
+						if(displayROI == vib)
+							sprintf(textbuffer, "t 4pos; V = %d nm", int(round(V)));
+					}
 				}
 				else
 				{
@@ -649,6 +719,8 @@ int main()
 				break;
 		
 			case '4':
+				if (accummode == true)
+					break;
 				if (averagescount == 1)
 					averagescount = 5; 
 				else 
@@ -657,6 +729,8 @@ int main()
 				break;
 
 			case '3':
+				if (accummode == true)
+					break;
 				// decrement number of averages by 5
 				if(averagescount >= 10)
 					averagescount -= 5;
@@ -679,105 +753,172 @@ int main()
 				// toggle ROI display
 				ROIflag = !ROIflag;
 				break;
-			
+		
+			case 'a':
+				// accumulate mode
+				accummode = true;
+				averagescount = 1;
+				//bgframestaken = false;
+				break;
+
+			case 'l':
+				// live mode
+				accummode = false;
+				averagescount = 1;
+				//bgframestaken = false;
+				break;
+
+	
 				// keys to change ROI
 
 			case 't':
 				if (ROIflag == false)
 					break;
-				// select the topleft corner point
-				selectedpoint = 1; //topleft
+				// select the ROI option to change position
+				selectedROIoption = 1; // position
 				break; 			 
 
 			case 'r':
 				if (ROIflag == false)
 					break;
-				// select the rightbottom corner point
-				selectedpoint = 2; //rightbottom
+				// select the ROI option to change size
+				selectedROIoption = 2; // size
 				break; 
 			 
+			case 'p':
+				if (ROIflag == false)
+					break;
+				// display the ROI stats for X1+X2
+				displayROI = 1; // plus 
+				break; 			 
+
+			case 'm':
+				if (ROIflag == false)
+					break;
+				// display the ROI stats for X2-X1
+				displayROI = 2; // minus  
+				break; 			 
+
+			case 'v':
+				if (ROIflag == false)
+					break;
+				// display the ROI stats for the vibration amplitude, V
+				displayROI = 3; // V  
+				break; 			 
+
 			case 82: 							// up arrow key = R ?
 				if (ROIflag == false)
 					break;
-				if(selectedpoint == topleft)
+				if(selectedROIoption == position)
 				{
-					// move up the topleft corner of ROI by 5 pixels
+					// move ROI up
 					if(ROIstartrow > 5)
-						ROIstartrow -= 5;
+					{
+						ROIstartrow -= 1;
+						ROIendrow -= 1;
+					}
 					ROItopleft.y = ROIstartrow;
-				}
-				if(selectedpoint == bottomright)
-				{
-					// move up the bottomright corner of ROI by 5 pixels
-					if(ROIendrow > 5)
-						ROIendrow -= 5;
-					if(ROIendrow-ROIstartrow <= 0)
-						ROIendrow += 5;
 					ROIbottright.y = ROIendrow;
+				}
+				if(selectedROIoption == size)
+				{
+					// blow up the ROI vertically
+					if(ROIstartrow > 5) 
+						ROIstartrow -= 1;
+					if(ROIendrow < (oph*binvaluey-5))
+						ROIendrow += 1;
+					ROItopleft.y = ROIstartrow;
+					ROIbottright.y = ROIendrow; 
 				}
 				break;
 
 			case 84: 						// down arrow key = T ?
 				if (ROIflag == false)
 					break;
-				if(selectedpoint == topleft)
+				if(selectedROIoption == position)
 				{
-					// move down the topleft corner of ROI by 5 pixels
-					if(ROIstartrow < (oph-5) )
-						ROIstartrow += 5;
-					if(ROIendrow-ROIstartrow <= 0)
-						ROIstartrow -= 5;
+					// move ROI down
+					if(ROIendrow < (oph*binvaluey-5))
+					{
+						ROIstartrow += 1;
+						ROIendrow += 1;
+					}
 					ROItopleft.y = ROIstartrow;
-				}
-				if(selectedpoint == bottomright)
-				{
-					// move down the bottomright corner of ROI by 5 pixels
-					if(ROIendrow < (oph-5) )
-						ROIendrow += 5;
 					ROIbottright.y = ROIendrow;
-
+				}
+				if(selectedROIoption == size)
+				{
+					// shrink the ROI vertically
+					if(ROIendrow-ROIstartrow <= 3)
+					{
+						ROIstartrow -= 1;
+						ROIendrow += 1;
+					}
+					else
+					{
+						ROIstartrow += 1;
+						ROIendrow -= 1;
+					}
+					ROItopleft.y = ROIstartrow;
+					ROIbottright.y = ROIendrow; 
 				}
 				break;
 
 			case 81:						// left arrow key = Q ?
 				if (ROIflag == false)
 					break;
-				if(selectedpoint == topleft)
+				if(selectedROIoption == position)
 				{ 
-					// move left the topleft corner of the ROI by 5 pixels
+					// move ROI left
 					if(ROIstartcol > 5)
-						ROIstartcol -= 5;
+					{
+						ROIstartcol -= 1;
+						ROIendcol -= 1;
+					}
 					ROItopleft.x = ROIstartcol;
-				}
-				if(selectedpoint == bottomright)
-				{
-					// move left the bottomright corner of the ROI by 5 pixels
-					if(ROIendcol > 5)
-						ROIendcol -= 5;
-					if(ROIendcol-ROIstartcol <= 0)
-						ROIendcol += 5;
 					ROIbottright.x = ROIendcol;
+				}
+				if(selectedROIoption == size)
+				{
+					// blow up the ROI horizontally
+					if(ROIstartcol > 5) 
+						ROIstartcol -= 1;
+					if(ROIendcol < (numdisplaypoints*binvaluey-5))
+						ROIendcol += 1;
+					ROItopleft.x = ROIstartcol;
+					ROIbottright.x = ROIendcol; 
 				}
 				break;
 
 			case 83:						// right arrow key = S ?
 				if (ROIflag == false)
 					break;
-				if(selectedpoint == topleft)
+				if(selectedROIoption == position)
 				{ 
-					// move right the topleft corner of the ROI by 5 pixels
-					if(ROIstartcol < (numdisplaypoints-5))
-						ROIstartcol += 5;
-					if(ROIendcol-ROIstartcol <= 0)
-						ROIstartcol -= 5;
+					// move ROI right
+					if(ROIendcol < (numdisplaypoints*binvaluex-5))
+					{
+						ROIstartcol += 1;
+						ROIendcol += 1;
+					}
 					ROItopleft.x = ROIstartcol;
-				}
-				if(selectedpoint == bottomright)
-				{
-					// move right the bottomright corner of the ROI by 5 pixels
-					if(ROIendcol < (numdisplaypoints-5))
-						ROIendcol += 5;
 					ROIbottright.x = ROIendcol;
+				}
+				if(selectedROIoption == size)
+				{
+					// shrink the ROI horizontally
+					if(ROIendcol-ROIstartcol <= 3)
+					{
+						ROIstartcol -= 1;
+						ROIendcol += 1;
+					}
+					else
+					{
+						ROIstartcol += 1;
+						ROIendcol -= 1;
+					}
+					ROItopleft.x = ROIstartcol;
+					ROIbottright.x = ROIendcol; 
 				}
 				break;
 
